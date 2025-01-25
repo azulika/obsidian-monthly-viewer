@@ -1,0 +1,76 @@
+.monthly-view-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.monthly-view-table th,
+.monthly-view-table td {
+    border: 1px solid var(--background-modifier-border);
+    padding: 5px;
+    text-align: left;
+}
+
+.monthly-view-table th {
+    background-color: var(--background-secondary);
+}
+
+.monthly-view-title-link {
+    cursor: pointer;
+    color: var(--text-accent);
+}
+
+.monthly-view-title-link:hover {
+    text-decoration: underline;
+}
+
+/* Add more styles as needed */
+.monthly-view-header {
+    display: flex;
+    flex-direction: column;
+    /* Arrange sections vertically */
+    gap: 10px;
+    /* Space between sections */
+    margin-bottom: 10px;
+    padding: 5px;
+}
+
+.monthly-view-filter-section,
+.monthly-view-sort-section {
+    display: flex;
+    align-items: center;
+    /* Align label and dropdown vertically */
+    gap: 5px;
+    /* Space between label and dropdown */
+}
+
+.monthly-view-filter-label,
+.monthly-view-sort-label {
+    font-weight: bold;
+}
+
+.monthly-view-filter-dropdown {
+    /* Style the dropdowns if needed */
+}
+
+/* ... other CSS ... */
+
+.monthly-view-table {
+    table-layout: fixed;
+    /* Important for fixed column widths */
+    width: 100%;
+}
+
+.monthly-view-title-header,
+.monthly-view-title-cell {
+    width: 70%;
+}
+
+.monthly-view-date-header,
+.monthly-view-date-cell {
+    width: 20%;
+}
+
+.monthly-view-char-header,
+.monthly-view-char-cell {
+    width: 10%;
+}
