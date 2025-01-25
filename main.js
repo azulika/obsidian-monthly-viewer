@@ -326,6 +326,7 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
     if (filterTags.length > 0) {
       files = files.filter((file) => {
         const cache = this.app.metadataCache.getFileCache(file);
+        if (!cache) return false; // Add null check here, if cache is null, file should not be included
 
         // Correct handling of frontmatter tags (undefined, string, or array)
         const frontmatterTags = cache.frontmatter?.tags;
@@ -348,6 +349,8 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
     if (filterFrontmatterKeys.length > 0) {
       files = files.filter((file) => {
         const cache = this.app.metadataCache.getFileCache(file);
+        if (!cache) return false; // Add null check here, if cache is null, file should not be included
+
         const frontmatter = cache.frontmatter || {};
         return filterFrontmatterKeys.some((key) =>
           Object.prototype.hasOwnProperty.call(frontmatter, key)
@@ -361,7 +364,7 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
   // Get date from frontmatter or file creation time
   getDate(file) {
     const cache = this.app.metadataCache.getFileCache(file);
-    const frontmatter = cache.frontmatter || {};
+    const frontmatter = cache?.frontmatter || {}; // Use optional chaining
 
     for (const key of this.settings.dateKeys) {
       if (frontmatter[key]) {
@@ -422,6 +425,10 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
 
     for (const file of this.app.vault.getMarkdownFiles()) {
       const cache = this.app.metadataCache.getFileCache(file);
+      if (!cache) { // Add null check here
+        console.log("Cache is null for file:", file.path); // Debug log
+        continue; // Skip to the next file if cache is null
+      }
 
       // Frontmatter tags
       const frontmatterTags = cache.frontmatter?.tags;
