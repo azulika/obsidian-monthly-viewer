@@ -7,7 +7,6 @@ const {
   PluginSettingTab,
   TFile,
   addIcon,
-  debounce,
 } = require("obsidian");
 
 const DEFAULT_SETTINGS = {
@@ -342,12 +341,18 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
       this.activateView();
     });
 
-    const debouncedUpdate = debounce(() => this.updateView(), 800, true);
-
-    this.registerEvent(this.app.vault.on("create", debouncedUpdate));
-    this.registerEvent(this.app.vault.on("delete", debouncedUpdate));
-    this.registerEvent(this.app.vault.on("rename", debouncedUpdate));
-    this.registerEvent(this.app.vault.on("modify", debouncedUpdate));
+    this.registerEvent(
+      this.app.vault.on("create", () => this.updateView())
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", () => this.updateView())
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", () => this.updateView())
+    );
+    this.registerEvent(
+      this.app.vault.on("modify", () => this.updateView())
+    );
   }
 
   async loadSettings() {
