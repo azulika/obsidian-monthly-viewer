@@ -181,19 +181,31 @@ class MonthlyView extends ItemView {
 
     const contentEl = container.createEl("div");
 
-    // Message when no notes are found
     if (Object.keys(groupedFiles).length === 0) {
       contentEl.createEl("div", {
         text: "No notes found for the current filter/sort criteria.",
         cls: "monthly-view-empty",
       });
-      return; // Stop further rendering
+      return;
     }
 
-    for (const year in groupedFiles) {
+    // --- 修正ポイント: 年の配列を取得してソートを適用 ---
+    const years = Object.keys(groupedFiles).sort((a, b) => {
+      return this.currentSortOrder === "asc" ? a - b : b - a;
+    });
+
+    for (const year of years) {
       const yearHeading = contentEl.createEl("h2", { text: year });
 
-      for (const month in groupedFiles[year]) {
+      // --- 修正ポイント: 月の配列を取得してソートを適用 ---
+      // momentの月名(MMMM)から数値を取得してソート
+      const months = Object.keys(groupedFiles[year]).sort((a, b) => {
+        const monthA = moment().month(a).format("M");
+        const monthB = moment().month(b).format("M");
+        return this.currentSortOrder === "asc" ? monthA - monthB : monthB - monthA;
+      });
+
+      for (const month of months) {
         const monthHeading = contentEl.createEl("h3", { text: month });
 
         const table = contentEl.createEl("table", {
@@ -203,7 +215,6 @@ class MonthlyView extends ItemView {
         const headerRow = thead.insertRow();
         headerRow.createEl("th", { text: "Title", cls: 'monthly-view-title-header' });
         headerRow.createEl("th", { text: "Created Date", cls: 'monthly-view-date-header' });
-        // headerRow.createEl("th", { text: "CC", cls: 'monthly-view-char-header' });
 
         const tbody = table.createTBody();
         for (const file of groupedFiles[year][month]) {
@@ -222,18 +233,9 @@ class MonthlyView extends ItemView {
             cls: "monthly-view-date-cell",
           });
 
-          // Get date from frontmatter (if valid), otherwise use file creation time
           const date = this.plugin.getDate(file);
           const createdDate = moment(date).format("M/D");
-
           createdDateCell.textContent = createdDate;
-
-          // const charCountCell = row.createEl("td", { cls: 'monthly-view-char-cell' });
-          // this.app.vault.cachedRead(file).then((content) => {
-          //   const charCount = content.length;
-          //   const charCountShortened = this.shortenNumber(charCount); // Use the new helper function
-          //   charCountCell.textContent = charCountShortened;
-          // });
         }
       }
     }
