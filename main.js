@@ -7,6 +7,7 @@ const {
   PluginSettingTab,
   TFile,
   addIcon,
+  debounce,
 } = require("obsidian");
 
 const DEFAULT_SETTINGS = {
@@ -211,12 +212,15 @@ class MonthlyView extends ItemView {
       this.currentFilterFrontmatterKeys,
       this.currentFilterFolder
     );
-    files = this.plugin.sortFiles(
+    // Decorate each file with its date once, sort, then group. This keeps
+    // getDate() (which reads the metadata cache and builds moment objects)
+    // at O(N) instead of being re-invoked O(N log N) times during sorting.
+    const items = this.plugin.sortFiles(
       files,
       this.currentSortBy,
       this.currentSortOrder
     );
-    const groupedFiles = this.plugin.groupFilesByMonth(files);
+    const groupedFiles = this.plugin.groupFilesByMonth(items);
 
     const contentEl = container.createEl("div");
 
@@ -267,7 +271,7 @@ class MonthlyView extends ItemView {
           headerRow.createEl("th", { text: "Created Date", cls: "monthly-view-date-header" });
 
           const tbody = table.createTBody();
-          for (const file of groupedFiles[year][month]) {
+          for (const { file, date } of groupedFiles[year][month]) {
             const row = tbody.insertRow();
 
             const titleCell = row.createEl("td", { cls: "monthly-view-title-cell" });
@@ -283,7 +287,6 @@ class MonthlyView extends ItemView {
               cls: "monthly-view-date-cell",
             });
 
-            const date = this.plugin.getDate(file);
             createdDateCell.textContent = moment(date).format("M/D");
           }
         };
@@ -321,6 +324,10 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
+    // Coalesce bursts of structural changes (e.g. bulk create/delete during a
+    // vault sync or import) into a single re-render instead of one per file.
+    this.scheduleUpdate = debounce(() => this.updateView(), 300, true);
+
     this.addSettingTab(new MonthlyViewerSettingTab(this.app, this));
 
     // Placeholder for the icon: Replace with your actual icon
@@ -341,17 +348,19 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
       this.activateView();
     });
 
+    // Only re-render when the set of notes actually changes. We deliberately
+    // do NOT listen to "modify": editing/saving a note (which Obsidian also
+    // fires for the previous note every time you switch notes) never changes
+    // its creation date, so it cannot affect this view's grouping — listening
+    // to it just caused a full re-render on every note open.
     this.registerEvent(
-      this.app.vault.on("create", () => this.updateView())
+      this.app.vault.on("create", () => this.scheduleUpdate())
     );
     this.registerEvent(
-      this.app.vault.on("delete", () => this.updateView())
+      this.app.vault.on("delete", () => this.scheduleUpdate())
     );
     this.registerEvent(
-      this.app.vault.on("rename", () => this.updateView())
-    );
-    this.registerEvent(
-      this.app.vault.on("modify", () => this.updateView())
+      this.app.vault.on("rename", () => this.scheduleUpdate())
     );
   }
 
@@ -457,34 +466,36 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
     return file.stat.ctime;
   }
 
+  // Returns an array of { file, date } items, sorted. getDate() is evaluated
+  // exactly once per file here (decorate-sort-undecorate) rather than inside
+  // the comparator, where it would run O(N log N) times.
   sortFiles(files, sortBy, sortOrder) {
-    files.sort((a, b) => {
-      const dateA = this.getDate(a);
-      const dateB = this.getDate(b);
-
+    const items = files.map((file) => ({ file, date: this.getDate(file) }));
+    items.sort((a, b) => {
       switch (sortBy) {
         case "name":
           return sortOrder === "asc"
-            ? a.basename.localeCompare(b.basename)
-            : b.basename.localeCompare(a.basename);
+            ? a.file.basename.localeCompare(b.file.basename)
+            : b.file.basename.localeCompare(a.file.basename);
         case "created":
           return sortOrder === "asc"
-            ? a.stat.ctime - b.stat.ctime
-            : b.stat.ctime - a.stat.ctime;
+            ? a.file.stat.ctime - b.file.stat.ctime
+            : b.file.stat.ctime - a.file.stat.ctime;
         case "date":
         default:
-          return sortOrder === "asc" ? dateA - dateB : dateB - dateA;
+          return sortOrder === "asc" ? a.date - b.date : b.date - a.date;
       }
     });
-    return files;
+    return items;
   }
 
-  groupFilesByMonth(files) {
+  // Accepts the { file, date } items produced by sortFiles and groups them by
+  // year/month, preserving the precomputed date so callers need not recompute.
+  groupFilesByMonth(items) {
     const grouped = {};
-    for (const file of files) {
-      const date = this.getDate(file);
-      const year = moment(date).format("YYYY");
-      const month = moment(date).format("M");
+    for (const item of items) {
+      const year = moment(item.date).format("YYYY");
+      const month = moment(item.date).format("M");
 
       if (!grouped[year]) {
         grouped[year] = {};
@@ -492,7 +503,7 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
       if (!grouped[year][month]) {
         grouped[year][month] = [];
       }
-      grouped[year][month].push(file);
+      grouped[year][month].push(item);
     }
     return grouped;
   }
@@ -512,8 +523,7 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
 
     for (const file of this.app.vault.getMarkdownFiles()) {
       const cache = this.app.metadataCache.getFileCache(file);
-      if (!cache) { // Add null check here
-        console.log("Cache is null for file:", file.path); // Debug log
+      if (!cache) {
         continue; // Skip to the next file if cache is null
       }
 
