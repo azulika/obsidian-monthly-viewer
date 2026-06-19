@@ -7,6 +7,7 @@ const {
   PluginSettingTab,
   TFile,
   addIcon,
+  debounce,
 } = require("obsidian");
 
 const DEFAULT_SETTINGS = {
@@ -15,6 +16,7 @@ const DEFAULT_SETTINGS = {
   viewParams: {
     filterTags: [],
     filterFrontmatterKeys: [],
+    filterFolder: "",
     sortBy: "date",
     sortOrder: "desc"
   }
@@ -30,6 +32,8 @@ class MonthlyView extends ItemView {
     this.currentSortOrder = this.plugin.settings.viewParams.sortOrder;
     this.currentFilterTags = this.plugin.settings.viewParams.filterTags;
     this.currentFilterFrontmatterKeys = this.plugin.settings.viewParams.filterFrontmatterKeys;
+    this.currentFilterFolder = this.plugin.settings.viewParams.filterFolder || "";
+    this.expandedMonths = new Set();
   }
 
   getViewType() {
@@ -61,12 +65,15 @@ class MonthlyView extends ItemView {
       cls: "monthly-view-filter-section",
     });
 
-    // Filter by tags label and dropdown
-    filterSection.createEl("label", {
-      text: "Filter by tags:",
+    // Filter by tags row
+    const tagFilterRow = filterSection.createEl("div", {
+      cls: "monthly-view-filter-row",
+    });
+    tagFilterRow.createEl("label", {
+      text: "Tags:",
       cls: "monthly-view-filter-label",
     });
-    const tagFilterDropdown = filterSection.createEl("select", {
+    const tagFilterDropdown = tagFilterRow.createEl("select", {
       cls: "monthly-view-filter-dropdown",
     });
     tagFilterDropdown.createEl("option", {
@@ -84,6 +91,38 @@ class MonthlyView extends ItemView {
         ? [tagFilterDropdown.value]
         : [];
       this.plugin.settings.viewParams.filterTags = this.currentFilterTags;
+      this.expandedMonths.clear();
+      await this.plugin.saveSettings();
+      this.updateView();
+    });
+
+    // Filter by folder row
+    const folderFilterRow = filterSection.createEl("div", {
+      cls: "monthly-view-filter-row",
+    });
+    folderFilterRow.createEl("label", {
+      text: "Folder:",
+      cls: "monthly-view-filter-label",
+    });
+    const folderFilterDropdown = folderFilterRow.createEl("select", {
+      cls: "monthly-view-filter-dropdown",
+    });
+    folderFilterDropdown.createEl("option", {
+      value: "",
+      text: "Filter by folder...",
+    });
+    const folders = this.plugin.getExistingFolders();
+    for (const folder of folders) {
+      folderFilterDropdown.createEl("option", {
+        value: folder,
+        text: folder === "" ? "/ (vault root)" : folder,
+      });
+    }
+    folderFilterDropdown.value = this.currentFilterFolder || "";
+    folderFilterDropdown.addEventListener("change", async () => {
+      this.currentFilterFolder = folderFilterDropdown.value;
+      this.plugin.settings.viewParams.filterFolder = this.currentFilterFolder;
+      this.expandedMonths.clear();
       await this.plugin.saveSettings();
       this.updateView();
     });
@@ -170,7 +209,8 @@ class MonthlyView extends ItemView {
 
     let files = this.plugin.getFilteredFiles(
       this.currentFilterTags,
-      this.currentFilterFrontmatterKeys
+      this.currentFilterFrontmatterKeys,
+      this.currentFilterFolder
     );
     files = this.plugin.sortFiles(
       files,
@@ -189,54 +229,82 @@ class MonthlyView extends ItemView {
       return;
     }
 
-    // --- 修正ポイント: 年の配列を取得してソートを適用 ---
     const years = Object.keys(groupedFiles).sort((a, b) => {
       return this.currentSortOrder === "asc" ? a - b : b - a;
     });
 
     for (const year of years) {
-      const yearHeading = contentEl.createEl("h2", { text: year });
+      contentEl.createEl("h2", { text: year, cls: "monthly-view-year-heading" });
 
-      // --- 修正ポイント: 月の配列を取得してソートを適用 ---
-      // momentの月名(MMMM)から数値を取得してソート
       const months = Object.keys(groupedFiles[year]).sort((a, b) => {
-        const monthA = moment().month(a).format("M");
-        const monthB = moment().month(b).format("M");
-        return this.currentSortOrder === "asc" ? monthA - monthB : monthB - monthA;
+        return this.currentSortOrder === "asc"
+          ? Number(a) - Number(b)
+          : Number(b) - Number(a);
+      });
+
+      const monthRow = contentEl.createEl("div", {
+        cls: "monthly-view-month-row",
       });
 
       for (const month of months) {
-        const monthHeading = contentEl.createEl("h3", { text: month });
-
-        const table = contentEl.createEl("table", {
-          cls: "monthly-view-table",
+        const key = `${year}-${month}`;
+        const monthBtn = monthRow.createEl("span", {
+          text: month,
+          cls: "monthly-view-month-btn",
         });
-        const thead = table.createTHead();
-        const headerRow = thead.insertRow();
-        headerRow.createEl("th", { text: "Title", cls: 'monthly-view-title-header' });
-        headerRow.createEl("th", { text: "Created Date", cls: 'monthly-view-date-header' });
 
-        const tbody = table.createTBody();
-        for (const file of groupedFiles[year][month]) {
-          const row = tbody.insertRow();
+        const tableHolder = contentEl.createEl("div", {
+          cls: "monthly-view-month-table-holder",
+        });
 
-          const titleCell = row.createEl("td", { cls: 'monthly-view-title-cell' });
-          const titleLink = titleCell.createEl("a", {
-            text: file.basename,
-            cls: "monthly-view-title-link",
+        const renderTable = () => {
+          tableHolder.empty();
+          const table = tableHolder.createEl("table", {
+            cls: "monthly-view-table",
           });
-          titleLink.addEventListener("click", () => {
-            this.app.workspace.getLeaf().openFile(file);
-          });
+          const thead = table.createTHead();
+          const headerRow = thead.insertRow();
+          headerRow.createEl("th", { text: "Title", cls: "monthly-view-title-header" });
+          headerRow.createEl("th", { text: "Created Date", cls: "monthly-view-date-header" });
 
-          const createdDateCell = row.createEl("td", {
-            cls: "monthly-view-date-cell",
-          });
+          const tbody = table.createTBody();
+          for (const file of groupedFiles[year][month]) {
+            const row = tbody.insertRow();
 
-          const date = this.plugin.getDate(file);
-          const createdDate = moment(date).format("M/D");
-          createdDateCell.textContent = createdDate;
+            const titleCell = row.createEl("td", { cls: "monthly-view-title-cell" });
+            const titleLink = titleCell.createEl("a", {
+              text: file.basename,
+              cls: "monthly-view-title-link",
+            });
+            titleLink.addEventListener("click", () => {
+              this.app.workspace.getLeaf().openFile(file);
+            });
+
+            const createdDateCell = row.createEl("td", {
+              cls: "monthly-view-date-cell",
+            });
+
+            const date = this.plugin.getDate(file);
+            createdDateCell.textContent = moment(date).format("M/D");
+          }
+        };
+
+        if (this.expandedMonths.has(key)) {
+          monthBtn.addClass("is-expanded");
+          renderTable();
         }
+
+        monthBtn.addEventListener("click", () => {
+          if (this.expandedMonths.has(key)) {
+            this.expandedMonths.delete(key);
+            monthBtn.removeClass("is-expanded");
+            tableHolder.empty();
+          } else {
+            this.expandedMonths.add(key);
+            monthBtn.addClass("is-expanded");
+            renderTable();
+          }
+        });
       }
     }
   }
@@ -274,18 +342,12 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
       this.activateView();
     });
 
-    this.registerEvent(
-      this.app.vault.on("create", () => this.updateView())
-    );
-    this.registerEvent(
-      this.app.vault.on("delete", () => this.updateView())
-    );
-    this.registerEvent(
-      this.app.vault.on("rename", () => this.updateView())
-    );
-    this.registerEvent(
-      this.app.vault.on("modify", () => this.updateView())
-    );
+    const debouncedUpdate = debounce(() => this.updateView(), 800, true);
+
+    this.registerEvent(this.app.vault.on("create", debouncedUpdate));
+    this.registerEvent(this.app.vault.on("delete", debouncedUpdate));
+    this.registerEvent(this.app.vault.on("rename", debouncedUpdate));
+    this.registerEvent(this.app.vault.on("modify", debouncedUpdate));
   }
 
   async loadSettings() {
@@ -321,8 +383,17 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
     }
   }
 
-  getFilteredFiles(filterTags, filterFrontmatterKeys) {
+  getFilteredFiles(filterTags, filterFrontmatterKeys, filterFolder) {
     let files = this.app.vault.getMarkdownFiles();
+
+    // Filter by folder (includes subfolders)
+    if (filterFolder) {
+      const prefix = filterFolder.endsWith("/") ? filterFolder : filterFolder + "/";
+      files = files.filter((file) => {
+        const parentPath = file.parent?.path ?? "";
+        return parentPath === filterFolder || parentPath.startsWith(prefix);
+      });
+    }
 
     // Filter by tags (frontmatter and inline)
     if (filterTags.length > 0) {
@@ -408,7 +479,7 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
     for (const file of files) {
       const date = this.getDate(file);
       const year = moment(date).format("YYYY");
-      const month = moment(date).format("MMMM");
+      const month = moment(date).format("M");
 
       if (!grouped[year]) {
         grouped[year] = {};
@@ -419,6 +490,15 @@ module.exports = class MonthlyViewerPlugin extends Plugin {
       grouped[year][month].push(file);
     }
     return grouped;
+  }
+
+  getExistingFolders() {
+    const folderSet = new Set();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const path = file.parent?.path ?? "";
+      folderSet.add(path);
+    }
+    return Array.from(folderSet).sort((a, b) => a.localeCompare(b));
   }
 
   getExistingTagsAndFrontmatterKeys() {
